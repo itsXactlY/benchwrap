@@ -187,6 +187,6 @@ class Result:
             for cat, vals in sorted(self.per_category.items()):
                 em = vals.get("exact_match", vals.get("accuracy", 0))
                 n = vals.get("n", 0)
-                lines.append(f"  {cat:20s} | {em:7.1%} | {n:6d}")
+                lines.append(f"  {str(cat):20s} | {em:7.1%} | {n:6d}")
         lines.append(f"{'=' * 60}")
         return "\n".join(lines)

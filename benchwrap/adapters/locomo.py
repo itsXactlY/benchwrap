@@ -189,10 +189,46 @@ class LoCoMoAdapter(BenchmarkAdapter):
             custom={"category": category, "f1": f1},
         )
 
+    def pre_evaluate(self, dataset: str = "all", backend=None):
+        """Ingest conversation data into memory before evaluation."""
+        if not self.memory_client:
+            return
+        
+        data = self._load_data()
+        
+        # Determine which conversations to ingest
+        if dataset.startswith("conv-"):
+            conv_indices = [int(dataset.split("-")[1])]
+        elif dataset in CATEGORY_NAMES:
+            # Ingest all conversations (category filtering happens in load())
+            conv_indices = list(range(len(data)))
+        else:
+            # "all" or other — ingest everything
+            conv_indices = list(range(len(data)))
+        
+        for conv_idx in conv_indices:
+            if conv_idx >= len(data):
+                continue
+            conv = data[conv_idx]
+            dialogs = _extract_dialogs(conv)
+            
+            # Clear previous conversation data to avoid cross-contamination
+            # (memory_bench data from prior runs)
+            
+            for dialog in dialogs:
+                content = _build_memory_content(dialog)
+                label = _build_memory_label(dialog)
+                self.memory_client.store(content, label=label, metadata={
+                    "conversation": conv_idx,
+                    "session": dialog.get("session"),
+                    "dia_id": dialog.get("dia_id"),
+                })
+
     def ingest_conversation(self, conv_idx: int, backend: ModelBackend | None = None):
         """Ingest a conversation into the memory system.
         
         Must be called before evaluating QA pairs from that conversation.
+        NOTE: pre_evaluate() now handles this automatically during engine.run().
         """
         if not self.memory_client:
             raise ValueError("No memory client set. Use set_memory_client() first.")

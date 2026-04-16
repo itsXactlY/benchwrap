@@ -183,14 +183,78 @@ class MemoryAgentBenchAdapter(BenchmarkAdapter):
                 yield sample
                 count += 1
 
+    def pre_evaluate(self, dataset: str = "all", backend=None):
+        """Store context facts into memory for retrieval-augmented scoring."""
+        if not self.memory_client:
+            return
+        
+        # Load all samples for this dataset to extract contexts
+        samples = list(self.load(dataset, limit=None))
+        
+        # Collect unique contexts (all QA pairs from same sample share context)
+        seen_contexts = set()
+        fact_count = 0
+        for sample in samples:
+            ctx = sample.metadata.get("context", "")
+            ctx_hash = hash(ctx[:1000])  # First 1KB for dedup
+            if ctx_hash in seen_contexts or not ctx:
+                continue
+            seen_contexts.add(ctx_hash)
+            
+            # Parse numbered facts from context (e.g., "0. fact\n1. fact\n...")
+            facts = self._parse_context_facts(ctx)
+            for i, fact in enumerate(facts):
+                self.memory_client.store(
+                    fact,
+                    label=f"mab_{dataset}_fact_{i}",
+                    metadata={"source": dataset, "fact_idx": i}
+                )
+                fact_count += 1
+        
+        print(f"[memory-agent-bench] Stored {fact_count} facts into memory")
+
+    def _parse_context_facts(self, context: str) -> list[str]:
+        """Parse numbered facts from context string."""
+        facts = []
+        for line in context.split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            # Match patterns like "0. fact", "1. fact", "42. fact"
+            import re
+            m = re.match(r'^\d+\.\s*(.+)', line)
+            if m:
+                facts.append(m.group(1).strip())
+            elif line.startswith('- '):
+                facts.append(line[2:].strip())
+            elif len(line) > 10:  # Arbitrary non-empty line
+                facts.append(line)
+        return facts
+
     def format_prompt(
         self,
         sample: Sample,
         fewshot: Optional[list[Sample]] = None,
     ) -> Prompt:
         """Format MAB sample as a recall/reasoning prompt."""
-        context = sample.metadata.get("context", "")
         question = sample.input
+        context = ""
+
+        if self.memory_client:
+            # Use memory recall instead of raw context
+            try:
+                results = self.memory_client.recall(question, top_k=20)
+                if results:
+                    context_parts = []
+                    for r in results:
+                        content = r.get("content", r.get("text", str(r)))
+                        context_parts.append(f"- {content}")
+                    context = "\n".join(context_parts)
+            except Exception as e:
+                context = f"[Memory recall error: {e}]"
+        else:
+            # No memory — use raw context from dataset
+            context = sample.metadata.get("context", "")
 
         if context:
             text = (

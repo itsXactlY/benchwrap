@@ -15,6 +15,14 @@ from benchwrap.core.model import ModelBackend
 from benchwrap.core.scorer import Scorer, get_scorer
 
 
+class _AdapterScorer(Scorer):
+    """Wraps adapter.score() as a Scorer so the engine uses adapter-specific scoring."""
+    def __init__(self, adapter):
+        self.adapter = adapter
+    def score(self, prediction: str, reference: str, sample=None, **kwargs) -> 'Score':
+        return self.adapter.score(prediction, reference, sample)
+
+
 class EvaluationEngine:
     """Runs a benchmark evaluation end-to-end.
     
@@ -82,6 +90,12 @@ class EvaluationEngine:
                     print(f"[benchwrap] WARNING: No train split for few-shot. "
                           f"Using test split (potential data leakage).")
 
+        # Pre-evaluation hook: adapters can do ingestion/setup before eval
+        if hasattr(self.adapter, 'pre_evaluate'):
+            self.adapter.pre_evaluate(dataset=dataset, backend=self.backend)
+            if self.verbose:
+                print(f"[benchwrap] Pre-evaluation hook completed")
+
         # Load samples
         samples = list(self.adapter.load(dataset, split=split, limit=limit))
         if self.verbose:
@@ -90,7 +104,8 @@ class EvaluationEngine:
         # Run evaluation
         eval_results = []
         correct = 0
-        scorer = self.scorer or self._infer_scorer(samples)
+        # Always use adapter's score() method — it knows its own scoring best
+        scorer = self.scorer or _AdapterScorer(self.adapter)
 
         for i, sample in enumerate(samples):
             if self.verbose and (i + 1) % 10 == 0:
