@@ -1,0 +1,312 @@
+"""
+MemoryAgentBench (MAB) adapter for benchwrap.
+ICLR 2026 memory-augmented agent benchmark.
+
+Categories:
+  - Conflict Resolution: FactConsolidation (single-hop, multi-hop)
+  - Long Range Understanding: Detective QA, InfBench
+  - Accurate Retrieval: EventQA, LongMemEval, Ruler
+  - Test Time Learning: ICL (In-Context Learning), RecSys
+
+Wraps existing MAB code at ~/projects/MemoryAgentBench/.
+Uses benchwrap ModelBackend for LLM calls.
+"""
+
+import json
+import os
+import sys
+import time
+import yaml
+from pathlib import Path
+from typing import Iterator, Optional
+
+from benchwrap.core.adapter import BenchmarkAdapter
+from benchwrap.core.types import Sample, Prompt, Score
+from benchwrap.core.model import ModelBackend
+
+
+MAB_DIR = Path.home() / "projects/MemoryAgentBench"
+
+# Dataset registry
+DATASETS = {
+    # Conflict Resolution
+    "conflict-sh-6k": {
+        "config": "configs/data_conf/Conflict_Resolution/Factconsolidation_sh_6k.yaml",
+        "category": "conflict_resolution",
+        "subcategory": "single-hop",
+        "context_size": "6k",
+    },
+    "conflict-mh-6k": {
+        "config": "configs/data_conf/Conflict_Resolution/Factconsolidation_mh_6k.yaml",
+        "category": "conflict_resolution",
+        "subcategory": "multi-hop",
+        "context_size": "6k",
+    },
+    "conflict-sh-32k": {
+        "config": "configs/data_conf/Conflict_Resolution/Factconsolidation_sh_32k.yaml",
+        "category": "conflict_resolution",
+        "subcategory": "single-hop",
+        "context_size": "32k",
+    },
+    "conflict-mh-32k": {
+        "config": "configs/data_conf/Conflict_Resolution/Factconsolidation_mh_32k.yaml",
+        "category": "conflict_resolution",
+        "subcategory": "multi-hop",
+        "context_size": "32k",
+    },
+    # Long Range Understanding
+    "detective-qa": {
+        "config": "configs/data_conf/Long_Range_Understanding/Detective_QA.yaml",
+        "category": "long_range_understanding",
+        "subcategory": "detective",
+    },
+    "infbench-sum": {
+        "config": "configs/data_conf/Long_Range_Understanding/InfBench_sum.yaml",
+        "category": "long_range_understanding",
+        "subcategory": "infbench",
+    },
+    # Accurate Retrieval
+    "eventqa-64k": {
+        "config": "configs/data_conf/Accurate_Retrieval/EventQA/Eventqa_64k.yaml",
+        "category": "accurate_retrieval",
+        "subcategory": "eventqa",
+        "context_size": "64k",
+    },
+    "eventqa-full": {
+        "config": "configs/data_conf/Accurate_Retrieval/EventQA/Eventqa_full.yaml",
+        "category": "accurate_retrieval",
+        "subcategory": "eventqa",
+        "context_size": "full",
+    },
+    "longmemeval-s": {
+        "config": "configs/data_conf/Accurate_Retrieval/LongMemEval/Longmemeval_s.yaml",
+        "category": "accurate_retrieval",
+        "subcategory": "longmemeval",
+    },
+    # Test Time Learning
+    "icl-nlu": {
+        "config": "configs/data_conf/Test_Time_Learning/ICL/ICL_nlu.yaml",
+        "category": "test_time_learning",
+        "subcategory": "icl",
+    },
+    "icl-banking77": {
+        "config": "configs/data_conf/Test_Time_Learning/ICL/ICL_banking77.yaml",
+        "category": "test_time_learning",
+        "subcategory": "icl",
+    },
+    "icl-clinic150": {
+        "config": "configs/data_conf/Test_Time_Learning/ICL/ICL_clinic150.yaml",
+        "category": "test_time_learning",
+        "subcategory": "icl",
+    },
+}
+
+
+class MemoryAgentBenchAdapter(BenchmarkAdapter):
+    """MemoryAgentBench — ICLR 2026 memory-augmented agent evaluation.
+    
+    Tests memory systems on: conflict resolution, long-range understanding,
+    accurate retrieval, and test-time learning.
+    
+    Data: ~/projects/MemoryAgentBench/data/
+    Configs: ~/projects/MemoryAgentBench/configs/
+    
+    Memory backend is injected via set_memory_client().
+    LLM backend is injected via set_llm_backend().
+    """
+
+    def __init__(
+        self,
+        memory_client=None,
+        llm_backend: ModelBackend | None = None,
+    ):
+        self.memory_client = memory_client
+        self.llm_backend = llm_backend
+        self._data_cache = {}
+
+    def name(self) -> str:
+        return "memory-agent-bench"
+
+    def datasets(self) -> list[str]:
+        return ["all"] + list(DATASETS.keys())
+
+    def load(
+        self,
+        dataset: str = "all",
+        split: str = "test",
+        limit: Optional[int] = None,
+    ) -> Iterator[Sample]:
+        """Load MAB samples."""
+        if dataset == "all":
+            dataset_list = list(DATASETS.keys())
+        elif dataset in DATASETS:
+            dataset_list = [dataset]
+        else:
+            # Try partial match
+            dataset_list = [d for d in DATASETS if dataset in d]
+            if not dataset_list:
+                raise ValueError(
+                    f"Unknown dataset '{dataset}'. Available: {', '.join(DATASETS.keys())}"
+                )
+
+        count = 0
+        for ds_name in dataset_list:
+            ds_info = DATASETS[ds_name]
+            samples = self._load_dataset(ds_name, ds_info)
+            for sample in samples:
+                if limit and count >= limit:
+                    return
+                sample.metadata["dataset_name"] = ds_name
+                sample.metadata["category"] = ds_info["category"]
+                sample.metadata["subcategory"] = ds_info.get("subcategory", "")
+                yield sample
+                count += 1
+
+    def format_prompt(
+        self,
+        sample: Sample,
+        fewshot: Optional[list[Sample]] = None,
+    ) -> Prompt:
+        """Format MAB sample as a recall/reasoning prompt."""
+        context = sample.metadata.get("context", "")
+        question = sample.input
+
+        if context:
+            text = (
+                f"Context:\n{context[:50000]}\n\n"
+                f"Question: {question}\n\n"
+                f"Answer:"
+            )
+        else:
+            text = f"Question: {question}\n\nAnswer:"
+
+        return Prompt(
+            system=None,
+            messages=[{"role": "user", "content": text}],
+            raw_text=text[:500],  # Truncate for logging (context can be huge)
+        )
+
+    def score(
+        self,
+        prediction: str,
+        reference: str,
+        sample: Sample,
+    ) -> Score:
+        """Score using exact match (EM) and F1."""
+        pred_clean = prediction.strip().lower()
+        ref_clean = reference.strip().lower()
+
+        # Exact match
+        em = 1.0 if pred_clean == ref_clean else 0.0
+
+        # Token-level F1
+        f1 = _compute_f1(pred_clean, ref_clean)
+
+        return Score(
+            exact_match=em,
+            f1=f1,
+            raw_prediction=prediction[:200],
+            raw_reference=reference,
+            scoring_method="mab_em_f1",
+        )
+
+    def _load_dataset(self, ds_name: str, ds_info: dict) -> list[Sample]:
+        """Load samples from an MAB dataset."""
+        cache_key = ds_name
+        if cache_key in self._data_cache:
+            return self._data_cache[cache_key]
+
+        config_path = MAB_DIR / ds_info["config"]
+        if not config_path.exists():
+            raise FileNotFoundError(f"MAB config not found: {config_path}")
+
+        with open(config_path) as f:
+            config = yaml.safe_load(f)
+
+        # Load the actual data file
+        data_path = MAB_DIR / config.get("data_path", "")
+        if not data_path.exists():
+            # Try alternative paths
+            data_path = MAB_DIR / "data" / ds_name.replace("-", "_")
+
+        samples = []
+        if data_path.exists():
+            samples = self._parse_data_file(data_path, ds_info)
+
+        self._data_cache[cache_key] = samples
+        return samples
+
+    def _parse_data_file(self, path: Path, ds_info: dict) -> list[Sample]:
+        """Parse an MAB data file into Samples."""
+        samples = []
+
+        if path.is_dir():
+            # Directory of files
+            for f in sorted(path.glob("*.json")):
+                with open(f) as fh:
+                    data = json.load(fh)
+                if isinstance(data, list):
+                    for i, item in enumerate(data):
+                        samples.append(self._item_to_sample(item, f.stem, i))
+                elif isinstance(data, dict):
+                    samples.append(self._item_to_sample(data, f.stem, 0))
+        elif path.suffix == ".json":
+            with open(path) as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                for i, item in enumerate(data):
+                    samples.append(self._item_to_sample(item, path.stem, i))
+            elif isinstance(data, dict):
+                for key, item in data.items():
+                    if isinstance(item, dict):
+                        samples.append(self._item_to_sample(item, key, 0))
+        elif path.suffix in (".jsonl", ".jsonl"):
+            with open(path) as f:
+                for i, line in enumerate(f):
+                    if line.strip():
+                        item = json.loads(line)
+                        samples.append(self._item_to_sample(item, path.stem, i))
+
+        return samples
+
+    def _item_to_sample(self, item: dict, file_id: str, idx: int) -> Sample:
+        """Convert a data item to a Sample."""
+        question = item.get("question", item.get("query", item.get("input", "")))
+        answer = item.get("answer", item.get("reference", item.get("output", "")))
+        context = item.get("context", item.get("passage", item.get("text", "")))
+
+        if isinstance(answer, list):
+            answer = "; ".join(str(a) for a in answer)
+        answer = str(answer)
+
+        return Sample(
+            id=f"mab_{file_id}_{idx}",
+            input=str(question),
+            reference=answer,
+            metadata={
+                "context": str(context)[:100000],  # Cap context size
+                "file_id": file_id,
+            },
+        )
+
+    def set_memory_client(self, client):
+        """Set the memory backend."""
+        self.memory_client = client
+
+    def set_llm_backend(self, backend: ModelBackend):
+        """Set the LLM backend."""
+        self.llm_backend = backend
+
+
+def _compute_f1(prediction: str, reference: str) -> float:
+    """Token-level F1."""
+    pred_tokens = prediction.split()
+    ref_tokens = reference.split()
+    if not pred_tokens or not ref_tokens:
+        return 0.0
+    common = set(pred_tokens) & set(ref_tokens)
+    if not common:
+        return 0.0
+    precision = len(common) / len(pred_tokens)
+    recall = len(common) / len(ref_tokens)
+    return 2 * precision * recall / (precision + recall)
