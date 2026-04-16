@@ -23,8 +23,8 @@ See `benchwrap/adapters/custom/README.md` for examples.
 
 - **stdlib-core**: Engine, scoring, reporting use only Python stdlib
 - **Transparent**: Every prompt logged, every score auditable
-- **Honest**: No pre-injected answers, no weight manipulation
-- **Pluggable**: 5-method adapter contract, nothing more
+- **Honest**:      No pre-injected answers, no weight manipulation
+- **Pluggable**:   5-method adapter contract, nothing more
 
 ## Running Tests
 
