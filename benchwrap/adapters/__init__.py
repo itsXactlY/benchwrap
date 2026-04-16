@@ -6,6 +6,7 @@ Scans benchwrap/adapters/ for .py files that define BenchmarkAdapter subclasses.
 import os
 import sys
 import importlib
+import importlib.util
 import inspect
 from typing import Optional
 

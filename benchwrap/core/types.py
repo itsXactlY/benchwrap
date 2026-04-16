@@ -6,7 +6,6 @@ Every type is transparent and inspectable — no hidden state.
 from dataclasses import dataclass, field
 from typing import Optional
 import time
-import json
 
 
 @dataclass
@@ -172,9 +171,14 @@ class Result:
             f"  Duration: {self.duration_s:.1f}s",
             f"{'=' * 60}",
         ]
+        # Metrics that are rates (0-1) shown as percentages
+        rate_metrics = {"exact_match", "accuracy", "f1"}
         for metric, value in self.metrics.items():
             if isinstance(value, float):
-                lines.append(f"  {metric:20s}: {value:.4f} ({value * 100:.1f}%)")
+                if metric in rate_metrics:
+                    lines.append(f"  {metric:20s}: {value:.4f} ({value * 100:.1f}%)")
+                else:
+                    lines.append(f"  {metric:20s}: {value:.2f}")
             else:
                 lines.append(f"  {metric:20s}: {value}")
         if self.per_category:

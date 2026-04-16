@@ -99,6 +99,9 @@ class MMLUAdapter(BenchmarkAdapter):
     def datasets(self) -> list[str]:
         return ["all"] + MMLU_SUBJECTS + list(MMLU_CATEGORIES.keys())
 
+    def default_dataset(self) -> str:
+        return "all"  # MMLU default is 'all' — run across all subjects
+
     def load(
         self,
         dataset: str = "all",

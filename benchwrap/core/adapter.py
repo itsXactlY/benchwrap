@@ -106,6 +106,19 @@ class BenchmarkAdapter(ABC):
         """
         return []
 
+    def default_dataset(self) -> str:
+        """Return the default dataset name when none is specified.
+        
+        Override in adapters that have a natural default.
+        Default: first item from datasets() (skipping 'all' if present).
+        """
+        ds = self.datasets()
+        # Skip 'all' — it's usually a meta-dataset, not a practical default
+        for d in ds:
+            if d != "all":
+                return d
+        return ds[0] if ds else "default"
+
     def extract_answer(self, response: str, sample: Sample) -> str:
         """Optional: extract the final answer from a verbose response.
         

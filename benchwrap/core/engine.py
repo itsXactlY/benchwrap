@@ -9,7 +9,7 @@ import json
 import os
 from typing import Optional
 
-from benchwrap.core.types import Sample, Prompt, Prediction, Score, EvalResult, Result
+from benchwrap.core.types import Sample, EvalResult, Result
 from benchwrap.core.adapter import BenchmarkAdapter
 from benchwrap.core.model import ModelBackend
 from benchwrap.core.scorer import Scorer, get_scorer
@@ -40,7 +40,7 @@ class EvaluationEngine:
 
     def run(
         self,
-        dataset: str = "default",
+        dataset: str | None = None,
         split: str = "test",
         limit: Optional[int] = None,
         fewshot: int = 0,
@@ -49,7 +49,7 @@ class EvaluationEngine:
         """Run the full evaluation pipeline.
         
         Args:
-            dataset: Dataset name from adapter.datasets()
+            dataset: Dataset name from adapter.datasets(). None = adapter default.
             split: Data split (train/test/validation)
             limit: Max samples to evaluate
             fewshot: Number of few-shot examples (0 = zero-shot)
@@ -62,6 +62,10 @@ class EvaluationEngine:
         adapter_name = self.adapter.name()
         model_name = self.backend.model_id()
         backend_name = self.backend.name()
+
+        # Resolve dataset — use adapter default if not specified
+        if dataset is None:
+            dataset = self.adapter.default_dataset()
 
         if self.verbose:
             print(f"[benchwrap] Starting {adapter_name} on {dataset}")

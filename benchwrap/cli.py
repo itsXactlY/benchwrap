@@ -5,7 +5,6 @@ benchwrap CLI — Unified benchmark evaluation.
 import argparse
 import sys
 import os
-import json
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -96,7 +95,7 @@ def cmd_run(args):
     # Run
     try:
         result = engine.run(
-            dataset=args.dataset or "default",
+            dataset=args.dataset,  # None = adapter picks its default
             split=args.split,
             limit=args.limit,
             fewshot=args.fewshot,

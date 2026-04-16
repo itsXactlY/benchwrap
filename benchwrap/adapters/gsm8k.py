@@ -102,8 +102,9 @@ class GSM8KAdapter(BenchmarkAdapter):
         reference: str,
         sample: Sample,
     ) -> Score:
-        """Score numeric answer."""
-        return self._scorer.score(prediction, reference)
+        """Score numeric answer — extract final number from CoT first."""
+        extracted = self.extract_answer(prediction, sample)
+        return self._scorer.score(extracted, reference)
 
     def fewshot_pool(self, dataset: str, split: str = "train") -> list[Sample]:
         """Load train split for few-shot examples."""

@@ -13,10 +13,6 @@ Uses benchwrap ModelBackend for LLM calls.
 """
 
 import json
-import os
-import sys
-import time
-import yaml
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -28,6 +24,7 @@ from benchwrap.core.model import ModelBackend
 MAB_DIR = Path.home() / "projects/MemoryAgentBench"
 
 # Dataset registry
+# sub_dataset = HF source filter, max_test_samples = cap per dataset
 DATASETS = {
     # Conflict Resolution
     "conflict-sh-6k": {
@@ -35,35 +32,47 @@ DATASETS = {
         "category": "conflict_resolution",
         "subcategory": "single-hop",
         "context_size": "6k",
+        "sub_dataset": "factconsolidation_sh_6k",
+        "max_test_samples": 20,
     },
     "conflict-mh-6k": {
         "config": "configs/data_conf/Conflict_Resolution/Factconsolidation_mh_6k.yaml",
         "category": "conflict_resolution",
         "subcategory": "multi-hop",
         "context_size": "6k",
+        "sub_dataset": "factconsolidation_mh_6k",
+        "max_test_samples": 20,
     },
     "conflict-sh-32k": {
         "config": "configs/data_conf/Conflict_Resolution/Factconsolidation_sh_32k.yaml",
         "category": "conflict_resolution",
         "subcategory": "single-hop",
         "context_size": "32k",
+        "sub_dataset": "factconsolidation_sh_32k",
+        "max_test_samples": 20,
     },
     "conflict-mh-32k": {
         "config": "configs/data_conf/Conflict_Resolution/Factconsolidation_mh_32k.yaml",
         "category": "conflict_resolution",
         "subcategory": "multi-hop",
         "context_size": "32k",
+        "sub_dataset": "factconsolidation_mh_32k",
+        "max_test_samples": 20,
     },
     # Long Range Understanding
     "detective-qa": {
         "config": "configs/data_conf/Long_Range_Understanding/Detective_QA.yaml",
         "category": "long_range_understanding",
         "subcategory": "detective",
+        "sub_dataset": "detective_qa",
+        "max_test_samples": 20,
     },
     "infbench-sum": {
         "config": "configs/data_conf/Long_Range_Understanding/InfBench_sum.yaml",
         "category": "long_range_understanding",
         "subcategory": "infbench",
+        "sub_dataset": "infbench_sum_eng_shots2",
+        "max_test_samples": 20,
     },
     # Accurate Retrieval
     "eventqa-64k": {
@@ -71,33 +80,45 @@ DATASETS = {
         "category": "accurate_retrieval",
         "subcategory": "eventqa",
         "context_size": "64k",
+        "sub_dataset": "eventqa_65536",
+        "max_test_samples": 20,
     },
     "eventqa-full": {
         "config": "configs/data_conf/Accurate_Retrieval/EventQA/Eventqa_full.yaml",
         "category": "accurate_retrieval",
         "subcategory": "eventqa",
         "context_size": "full",
+        "sub_dataset": "eventqa_full",
+        "max_test_samples": 20,
     },
     "longmemeval-s": {
         "config": "configs/data_conf/Accurate_Retrieval/LongMemEval/Longmemeval_s.yaml",
         "category": "accurate_retrieval",
         "subcategory": "longmemeval",
+        "sub_dataset": "longmemeval_s_-1_500",
+        "max_test_samples": 20,
     },
     # Test Time Learning
     "icl-nlu": {
         "config": "configs/data_conf/Test_Time_Learning/ICL/ICL_nlu.yaml",
         "category": "test_time_learning",
         "subcategory": "icl",
+        "sub_dataset": "icl_nlu_8296shot_balance",
+        "max_test_samples": 20,
     },
     "icl-banking77": {
         "config": "configs/data_conf/Test_Time_Learning/ICL/ICL_banking77.yaml",
         "category": "test_time_learning",
         "subcategory": "icl",
+        "sub_dataset": "icl_banking77_5900shot_balance",
+        "max_test_samples": 20,
     },
     "icl-clinic150": {
         "config": "configs/data_conf/Test_Time_Learning/ICL/ICL_clinic150.yaml",
         "category": "test_time_learning",
         "subcategory": "icl",
+        "sub_dataset": "icl_clinic150_7050shot_balance",
+        "max_test_samples": 20,
     },
 }
 
@@ -211,30 +232,97 @@ class MemoryAgentBenchAdapter(BenchmarkAdapter):
         )
 
     def _load_dataset(self, ds_name: str, ds_info: dict) -> list[Sample]:
-        """Load samples from an MAB dataset."""
+        """Load samples from MAB dataset via HuggingFace."""
         cache_key = ds_name
         if cache_key in self._data_cache:
             return self._data_cache[cache_key]
 
-        config_path = MAB_DIR / ds_info["config"]
-        if not config_path.exists():
-            raise FileNotFoundError(f"MAB config not found: {config_path}")
-
-        with open(config_path) as f:
-            config = yaml.safe_load(f)
-
-        # Load the actual data file
-        data_path = MAB_DIR / config.get("data_path", "")
-        if not data_path.exists():
-            # Try alternative paths
-            data_path = MAB_DIR / "data" / ds_name.replace("-", "_")
-
         samples = []
-        if data_path.exists():
-            samples = self._parse_data_file(data_path, ds_info)
+        
+        try:
+            from datasets import load_dataset
+        except ImportError:
+            print(f"[memory-agent-bench] 'datasets' not installed. pip install datasets")
+            self._data_cache[cache_key] = samples
+            return samples
+
+        hf_dataset_name = "ai-hyz/MemoryAgentBench"
+        hf_split = ds_info.get("category", "").replace("_", " ").title().replace(" ", "_")
+        # Map category names to actual HF split names
+        split_map = {
+            "conflict_resolution": "Conflict_Resolution",
+            "long_range_understanding": "Long_Range_Understanding",
+            "accurate_retrieval": "Accurate_Retrieval",
+            "test_time_learning": "Test_Time_Learning",
+        }
+        hf_split = split_map.get(ds_info["category"], ds_info["category"])
+        sub_dataset = ds_info.get("sub_dataset", "")
+        max_samples = ds_info.get("max_test_samples", 20)
+
+        try:
+            print(f"[memory-agent-bench] Loading {sub_dataset} from {hf_dataset_name}/{hf_split}...")
+            raw_data = load_dataset(hf_dataset_name, split=hf_split, revision="main")
+            
+            # Filter by source (sub_dataset)
+            if sub_dataset:
+                raw_data = raw_data.filter(
+                    lambda s: s.get("metadata", {}).get("source", "") == sub_dataset
+                )
+            
+            print(f"[memory-agent-bench] Got {len(raw_data)} samples, using up to {max_samples}")
+            
+            count = 0
+            for sample in raw_data:
+                if count >= max_samples:
+                    break
+                    
+                questions = self._ensure_list(sample.get("questions", []))
+                answers = self._ensure_list(sample.get("answers", []))
+                
+                # Build context from dialogue/context fields
+                context = ""
+                if "context" in sample:
+                    context = sample["context"]
+                elif "contexts" in sample:
+                    ctxs = sample["contexts"]
+                    if isinstance(ctxs, list):
+                        context = "\n\n".join(str(c) for c in ctxs[:5])  # Cap context
+                    else:
+                        context = str(ctxs)
+                
+                # Yield one Sample per QA pair
+                num_pairs = min(len(questions), len(answers))
+                for j in range(num_pairs):
+                    q = str(questions[j]).strip()
+                    a = str(answers[j]).strip()
+                    if not q:
+                        continue
+                    samples.append(Sample(
+                        id=f"mab_{ds_name}_{count}_{j}",
+                        input=q,
+                        reference=a,
+                        metadata={
+                            "context": str(context)[:100000],
+                            "file_id": ds_name,
+                            "qa_pair_id": j,
+                        },
+                    ))
+                count += 1
+                
+        except Exception as e:
+            print(f"[memory-agent-bench] Failed to load {ds_name}: {e}")
 
         self._data_cache[cache_key] = samples
         return samples
+
+    @staticmethod
+    def _ensure_list(val):
+        """Ensure a value is a list."""
+        if isinstance(val, list):
+            return val
+        if val:
+            return [val]
+        return []
 
     def _parse_data_file(self, path: Path, ds_info: dict) -> list[Sample]:
         """Parse an MAB data file into Samples."""

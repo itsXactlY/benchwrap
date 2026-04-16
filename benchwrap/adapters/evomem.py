@@ -11,8 +11,6 @@ Source: ~/projects/evo_mem/
 """
 
 import json
-import os
-import sys
 import re
 from pathlib import Path
 from typing import Iterator, Optional
@@ -249,35 +247,64 @@ class EvoMemAdapter(BenchmarkAdapter):
         return samples
 
     def _load_mmlu_pro(self, data_dir: Path) -> list[Sample]:
-        """Load MMLU-Pro samples from EvoMem data."""
+        """Load MMLU-Pro samples from EvoMem data.
+        
+        Handles both:
+        - Directory of per-subject JSON files: data/mmlu_pro/*.json
+        - Single flat JSON file: data/mmlu_pro.json
+        """
         samples = []
-        mmlu_dir = data_dir / "mmlu_pro"
-        if not mmlu_dir.exists():
-            # Try alternative path
-            mmlu_dir = data_dir / "mmlu-pro"
-        if not mmlu_dir.exists():
-            return samples
 
-        for f in mmlu_dir.glob("*.json*"):
-            with open(f) as fh:
-                try:
-                    data = json.load(fh)
-                except json.JSONDecodeError:
-                    continue
+        def _parse_items(data, source_name):
+            parsed = []
             if isinstance(data, list):
                 for i, item in enumerate(data[:50]):  # Cap per file
                     question = item.get("question", "")
-                    choices = item.get("choices", [])
+                    choices = item.get("choices", item.get("options", []))
                     answer = item.get("answer", "")
                     if isinstance(answer, int):
                         answer = chr(65 + answer)  # 0 -> A, 1 -> B, etc.
-                    samples.append(Sample(
-                        id=f"evomem_mmlu_{f.stem}_{i}",
+                    # Handle answer-as-index into choices
+                    if isinstance(answer, str) and answer.isdigit() and choices:
+                        idx = int(answer)
+                        if 0 <= idx < len(choices):
+                            answer = chr(65 + idx)
+                    parsed.append(Sample(
+                        id=f"evomem_mmlu_{source_name}_{i}",
                         input=question,
                         reference=str(answer),
                         choices=choices if choices else None,
-                        metadata={"subject": f.stem},
+                        metadata={"subject": source_name},
                     ))
+            return parsed
+
+        # Try directory of per-subject files first
+        mmlu_dir = data_dir / "mmlu_pro"
+        if not mmlu_dir.exists():
+            mmlu_dir = data_dir / "mmlu-pro"
+        if mmlu_dir.exists() and mmlu_dir.is_dir():
+            for f in mmlu_dir.glob("*.json*"):
+                with open(f) as fh:
+                    try:
+                        data = json.load(fh)
+                    except json.JSONDecodeError:
+                        continue
+                samples.extend(_parse_items(data, f.stem))
+            if samples:
+                return samples
+
+        # Fallback: flat JSON file (e.g. data/mmlu_pro.json)
+        for candidate in ["mmlu_pro.json", "mmlu-pro.json"]:
+            flat_file = data_dir / candidate
+            if flat_file.exists():
+                with open(flat_file) as fh:
+                    try:
+                        data = json.load(fh)
+                    except json.JSONDecodeError:
+                        continue
+                samples = _parse_items(data, flat_file.stem)
+                break
+
         return samples
 
     def _load_gpqa(self, data_dir: Path) -> list[Sample]:
