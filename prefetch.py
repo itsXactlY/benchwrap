@@ -73,6 +73,26 @@ def prefetch_gsm8k() -> tuple[int, int]:
     return ok, fail
 
 
+def prefetch_locomo() -> tuple[int, int]:
+    """Download locomo10.json from snap-research/locomo to the path the adapter expects."""
+    import urllib.request
+    target = Path.home() / "projects" / "locomo-bench" / "data" / "locomo10.json"
+    if target.exists() and target.stat().st_size > 1000:
+        print(f"  locomo10.json already at {target} ({target.stat().st_size} bytes)")
+        return 1, 0
+    target.parent.mkdir(parents=True, exist_ok=True)
+    url = "https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json"
+    print(f"  downloading {url}")
+    try:
+        urllib.request.urlretrieve(url, target)
+        print(f"  → {target} ({target.stat().st_size} bytes)")
+        return 1, 0
+    except Exception as e:
+        print(f"  FAIL: {e}")
+        print(f"  → manually fetch into {target}")
+        return 0, 1
+
+
 def prefetch_memory_agent_bench() -> tuple[int, int]:
     """Walk MemoryAgentBench's dataset list so HF datasets cache is warm."""
     try:
@@ -101,13 +121,14 @@ def prefetch_memory_agent_bench() -> tuple[int, int]:
 def report_external() -> None:
     """Tell the user about benchmarks that need manually-placed data."""
     targets = {
-        "locomo": Path.home() / "projects" / "locomo-bench" / "data" / "locomo10.json",
         "evomem": Path.home() / "projects" / "evo_mem" / "data",
     }
     print("\n[prefetch] external-data benchmarks:")
     for name, path in targets.items():
         status = "PRESENT" if path.exists() else "MISSING"
         print(f"  {name:<8} {status:<8} {path}")
+        if status == "MISSING":
+            print(f"           populate manually — no canonical public source")
 
 
 def warm_embedder() -> None:
@@ -125,6 +146,7 @@ def warm_embedder() -> None:
 ADAPTERS = {
     "mmlu":               prefetch_mmlu,
     "gsm8k":              prefetch_gsm8k,
+    "locomo":             prefetch_locomo,
     "memory-agent-bench": prefetch_memory_agent_bench,
 }
 
