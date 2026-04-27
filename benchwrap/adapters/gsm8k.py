@@ -115,28 +115,37 @@ class GSM8KAdapter(BenchmarkAdapter):
         return pool
 
     def extract_answer(self, response: str, sample: Sample) -> str:
-        """Extract numeric answer from response.
-        
-        GSM8K uses '#### NUMBER' format for the final answer.
-        We also handle free-form responses.
+        """Extract the FINAL numeric answer from a (possibly verbose) response.
+
+        Reasoning models write many intermediate '=' equations before the
+        final answer. We prefer the last match of strong markers, falling
+        through to the last number in the text.
         """
-        # Standard GSM8K format: #### NUMBER
-        m = re.search(r'####\s*(-?\d+(?:\.\d+)?)', response)
-        if m:
-            return m.group(1)
+        num = r'-?\d{1,}(?:[,]\d{3})*(?:\.\d+)?'
 
-        # Look for "the answer is NUMBER" pattern
-        m = re.search(
-            r'(?:the answer is|The answer is|=)\s*\$?\s*(-?\d+(?:\.\d+)?)',
+        # 1) GSM8K-style: '#### NUMBER' (always wins; take last if multiple)
+        ms = list(re.finditer(rf'####\s*({num})', response))
+        if ms:
+            return ms[-1].group(1).replace(",", "")
+
+        # 2) LaTeX \boxed{NUMBER} — common in reasoning-model output
+        ms = list(re.finditer(rf'\\boxed\{{\s*\$?\s*({num})\s*\}}', response))
+        if ms:
+            return ms[-1].group(1).replace(",", "")
+
+        # 3) 'the answer is NUMBER' / 'Answer: NUMBER' / 'Final answer: NUMBER'
+        ms = list(re.finditer(
+            rf'(?ix) (?: the\s+answer\s+is | answer\s*[:=] | final\s+answer\s*[:=] )'
+            rf'\s*\$?\s*({num})',
             response,
-        )
-        if m:
-            return m.group(1)
+        ))
+        if ms:
+            return ms[-1].group(1).replace(",", "")
 
-        # Last number in the response
-        numbers = re.findall(r'-?\d+(?:\.\d+)?', response)
-        if numbers:
-            return numbers[-1]
+        # 4) Last number anywhere — works for "...so it's 42." style endings
+        nums = re.findall(num, response)
+        if nums:
+            return nums[-1].replace(",", "")
 
         return response.strip()
 
