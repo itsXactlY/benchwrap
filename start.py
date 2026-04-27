@@ -20,10 +20,11 @@ import subprocess
 import sys
 
 PRESETS = {
-    "preview":       {"limit": 3,   "modes": "baseline,fresh,prod-readonly"},
-    "full":          {"limit": 100, "modes": "baseline,fresh,prod-readonly"},
-    "prod":          {"limit": 50,  "modes": "fresh,prod-readonly"},
-    "prod-readonly": {"limit": 50,  "modes": "prod-readonly"},
+    # full = every sub-task, every sample. extras gets --full forwarded to run_suite.
+    "preview":       {"limit": 3,   "modes": "baseline,fresh,prod-readonly", "extras": []},
+    "full":          {"limit": 0,   "modes": "baseline,fresh,prod-readonly", "extras": ["--full"]},
+    "prod":          {"limit": 50,  "modes": "fresh,prod-readonly",          "extras": []},
+    "prod-readonly": {"limit": 50,  "modes": "prod-readonly",                "extras": []},
 }
 DEFAULT_MODEL = "ollama:openhermes:7b-v2.5"
 
@@ -60,12 +61,13 @@ def main():
         "--model", model,
         "--modes", cfg["modes"],
         "--limit", str(cfg["limit"]),
+        *cfg["extras"],
     ]
 
     print(f"\n  model:  {model}")
     print(f"  preset: {preset}")
     print(f"  modes:  {cfg['modes']}")
-    print(f"  limit:  {cfg['limit']}")
+    print(f"  limit:  {'∞ (--full)' if '--full' in cfg['extras'] else cfg['limit']}")
     print(f"  →  {' '.join(cmd)}\n")
 
     if ask("Run now?", "y").lower() not in ("y", "yes"):
