@@ -10,7 +10,9 @@ Source: https://huggingface.co/datasets/cais/mmlu
 
 import os
 import json
+import time
 import urllib.request
+import urllib.error
 from typing import Iterator, Optional
 
 from benchwrap.core.adapter import BenchmarkAdapter
@@ -267,22 +269,39 @@ class MMLUAdapter(BenchmarkAdapter):
         offset = 0
         batch_size = 100
 
+        headers = {"User-Agent": "benchwrap/0.1.0"}
+        token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
         while True:
             url = (
                 f"https://datasets-server.huggingface.co/rows"
                 f"?dataset=cais/mmlu&config={subject}&split={split}"
                 f"&offset={offset}&length={batch_size}"
             )
-            req = urllib.request.Request(
-                url, headers={"User-Agent": "benchwrap/0.1.0"}
-            )
-            try:
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    data = json.loads(resp.read())
-            except Exception as e:
+
+            data = None
+            for attempt in range(5):
+                req = urllib.request.Request(url, headers=headers)
+                try:
+                    with urllib.request.urlopen(req, timeout=30) as resp:
+                        data = json.loads(resp.read())
+                    break
+                except urllib.error.HTTPError as he:
+                    if he.code in (429, 502, 503, 504):
+                        wait = min(60, 5 * (2 ** attempt))
+                        print(f"[mmlu] {he.code} on {subject}/{split}@{offset}; "
+                              f"retry {attempt + 1}/5 in {wait}s")
+                        time.sleep(wait)
+                        continue
+                    raise
+                except Exception:
+                    raise
+            if data is None:
                 if offset == 0:
                     raise RuntimeError(
-                        f"Failed to fetch MMLU data for {subject}. Error: {e}"
+                        f"Failed to fetch MMLU data for {subject} after retries."
                     )
                 break
 

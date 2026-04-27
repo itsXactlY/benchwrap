@@ -8,6 +8,8 @@ Examples
     python3 start.py ollama:openhermes:7b-v2.5 --preview
     python3 start.py ollama:openhermes:7b-v2.5 --prod
     python3 start.py ollama:openhermes:7b-v2.5 --prod-readonly
+    python3 start.py --prefetch                               # warm caches first
+    python3 start.py ollama:openhermes:7b-v2.5 --full --prefetch
 
 Modes
 -----
@@ -34,18 +36,25 @@ def ask(prompt: str, default: str) -> str:
     return val or default
 
 
-def parse_argv(argv: list[str]) -> tuple[str | None, str | None]:
-    model, preset = None, None
+def parse_argv(argv: list[str]) -> tuple[str | None, str | None, bool]:
+    model, preset, prefetch = None, None, False
     for a in argv:
-        if a.startswith("--") and a[2:] in PRESETS:
+        if a == "--prefetch":
+            prefetch = True
+        elif a.startswith("--") and a[2:] in PRESETS:
             preset = a[2:]
         elif not a.startswith("-"):
             model = a
-    return model, preset
+    return model, preset, prefetch
 
 
 def main():
-    model, preset = parse_argv(sys.argv[1:])
+    model, preset, prefetch = parse_argv(sys.argv[1:])
+
+    if prefetch:
+        rc = subprocess.call([sys.executable, "prefetch.py"])
+        if rc != 0:
+            print(f"[start] prefetch exited {rc}; continuing anyway.")
 
     if model is None:
         model = ask("Model", DEFAULT_MODEL)
