@@ -70,7 +70,9 @@ def load_env() -> None:
 
     # Promote anything Hermes set, without clobbering caller's env.
     for k in ("HF_TOKEN", "HUGGINGFACE_HUB_TOKEN", "HF_HOME",
-              "HF_HUB_CACHE", "TRANSFORMERS_CACHE", "HF_DATASETS_CACHE"):
+              "HF_HUB_CACHE", "TRANSFORMERS_CACHE", "HF_DATASETS_CACHE",
+              "MINIMAX_API_KEY", "MINIMAX_CN_API_KEY",
+              "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "NIM_API_KEY"):
         if k in hermes_env and not os.environ.get(k):
             os.environ[k] = hermes_env[k]
 

@@ -28,7 +28,7 @@ PRESETS = {
     "prod":          {"limit": 50,  "modes": "fresh,prod-readonly",          "extras": []},
     "prod-readonly": {"limit": 50,  "modes": "prod-readonly",                "extras": []},
 }
-DEFAULT_MODEL = "ollama:openhermes:7b-v2.5"
+DEFAULT_MODEL = "minimax:MiniMax-M2.7"
 
 
 def ask(prompt: str, default: str) -> str:
