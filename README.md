@@ -21,6 +21,28 @@ We've run 5+ benchmark frameworks. Each one: different config format, different 
 5. **PRODUCTION-FAITHFUL** — memory benchmarks run with the same settings the production agent uses (`auto_connect=True`, `detect_conflicts=True`, hybrid retrieval, rerank). No "benchmark-safe" relaxations that mask real-world behavior.
 6. **PROD DB IS OFF-LIMITS** — `db_path` is required, asserted not-prod at construction; benchmark runs always use a tempfile.
 
+### How a sample flows
+
+```mermaid
+flowchart LR
+    A[adapter.load] --> B[pre_sample hook]
+    B --> C[adapter.format_prompt]
+    C --> D[backend.generate]
+    D --> E[adapter.extract_answer]
+    E --> F[adapter.score / Scorer]
+    F --> G[Result + per-sample JSON]
+
+    subgraph engine [EvaluationEngine.run]
+        B
+        C
+        D
+        E
+        F
+    end
+```
+
+Every step is logged. `Prompt.raw_text` is the exact text the model sees. `Score.scoring_method` records how the verdict was reached. Nothing is hidden.
+
 ## Quick Start
 
 ```bash
@@ -43,7 +65,23 @@ python3 prefetch.py
 
 ## The Suite (`run_suite.py`)
 
-Two modes:
+Two modes — same prompts, same scorer, only the memory layer changes:
+
+```mermaid
+flowchart TB
+    Q[benchmark sample] --> M{mode?}
+    M -->|baseline| L1[LLM only]
+    M -->|neural| NM[Neural Memory V3.1<br/>tempfile DB]
+    NM -->|recall / recall_temporal / recall_multihop| L2[LLM + retrieved context]
+    L1 --> S[adapter.score]
+    L2 --> S
+    S --> R[Result row in suite_summary.json]
+
+    PROD[(~/.neural_memory/memory.db<br/>PRODUCTION DB)]:::offlimits
+    NM -. asserted ≠ .-> PROD
+
+    classDef offlimits fill:#400,stroke:#f55,color:#fff
+```
 
 | Mode | What it tests |
 |------|---|
@@ -171,6 +209,52 @@ class MyBenchmark(BenchmarkAdapter):
 Auto-discovered on next `benchwrap list`.
 
 ## Architecture
+
+### Component map
+
+```mermaid
+graph TB
+    subgraph entry [Entry points]
+        START[start.py<br/>interactive launcher]
+        SUITE[run_suite.py<br/>baseline vs neural]
+        CLI[benchwrap.py<br/>single-bench CLI]
+        PRE[prefetch.py<br/>warm HF + locomo caches]
+        VIEW[benchview.py<br/>ASCII bar charts]
+    end
+
+    subgraph core [benchwrap/core]
+        ENG[engine.py<br/>EvaluationEngine]
+        TYP[types.py<br/>Sample · Prompt · Prediction · Score · Result]
+        ADP[adapter.py<br/>BenchmarkAdapter ABC<br/>+ pre_sample · default_eval_config]
+        MOD[model.py<br/>Ollama · OpenAI-compat · Anthropic-compat]
+        SCO[scorer.py<br/>MCQ · Numeric · F1 · Reasoning]
+        REP[reporter.py<br/>Terminal · JSON · CSV]
+    end
+
+    subgraph adapters [benchwrap/adapters — auto-discovered]
+        MMLU[mmlu]
+        GSM[gsm8k]
+        MB[memory_bench<br/>F1 primary]
+        LOCO[locomo<br/>per-conv pre_sample]
+        MAB[memory_agent]
+        EVO[evomem]
+        NM[neural_memory<br/>V3.1 + prod-DB guard]
+        CUS[custom/]
+    end
+
+    START --> SUITE
+    SUITE --> ENG
+    CLI --> ENG
+    ENG --> ADP
+    ENG --> MOD
+    ENG --> SCO
+    ENG --> REP
+    ADP --> TYP
+    MMLU & GSM & MB & LOCO & MAB & EVO & NM & CUS --> ADP
+    MB & LOCO & MAB & EVO --> NM
+```
+
+### File layout
 
 ```
 benchwrap/
