@@ -1,32 +1,26 @@
 #!/usr/bin/env python3
 """
-run_suite.py — Full benchwrap suite: ALL benchmarks × 3 memory modes.
+run_suite.py — benchwrap suite: plain LLM vs LLM + Neural Memory.
 
 Modes
 -----
-  baseline       — LLM only. memory_client=None. Memory adapters run zero-shot
-                   (no recalled context). Confabulation baseline for memory tasks.
-  fresh          — Fresh temp Neural Memory DB. Each memory adapter clears and
-                   ingests its own fixtures, then queries. Standard memory eval.
-  prod-readonly  — Snapshot of the LIVE production DB. Recall-only — store(),
-                   ingest(), and clear() are dropped. Measures how the system
-                   behaves with whatever production happens to surface.
+  baseline   — LLM only, no memory. Memory adapters get memory_client=None
+               and run zero-shot. Confabulation floor for memory tasks.
+  neural     — LLM + Neural Memory with the full toolset (remember, recall,
+               recall_multihop, recall_temporal, think, connections, graph).
+               Each memory adapter dispatches to the right tool for its
+               task type (multi-hop vs temporal vs plain recall).
 
-The prod DB is NEVER opened for writing — see
-`benchwrap/adapters/neural_memory_readonly.py` for the safety model.
+Each adapter declares its canonical eval protocol via default_eval_config()
+— MMLU runs 5-shot, GSM8K runs 8-shot CoT, etc. The harness doesn't impose
+arbitrary defaults; it honors the protocol the benchmark was designed for.
 
 Usage
 -----
-    # Run all benchmarks in all 3 modes (default: 10 samples each)
-    python3 run_suite.py
-
-    # Single mode, more samples
-    python3 run_suite.py --modes fresh --limit 50
-
-    # Skip benchmarks that need external data dirs
-    python3 run_suite.py --modes baseline,fresh --skip locomo,evomem,memory-agent-bench
-
-    # Different model
+    python3 run_suite.py                               # both modes, 10 samples
+    python3 run_suite.py --full                        # all sub-tasks, all samples
+    python3 run_suite.py --modes neural --limit 50
+    python3 run_suite.py --skip evomem
     python3 run_suite.py --model ollama:qwen2.5:7b
 """
 
@@ -108,7 +102,7 @@ from benchwrap.core.engine import EvaluationEngine
 from benchwrap.core.model import parse_backend
 from benchwrap.adapters import discover_adapters, get_adapter
 
-MODES = ("baseline", "fresh", "prod-readonly")
+MODES = ("baseline", "neural")
 
 # Benchmarks the suite knows how to run, in display order.
 # Each entry: (adapter_name, default_dataset_or_None, uses_memory)
@@ -144,14 +138,9 @@ def build_memory_backend(mode: str):
     """Construct the memory backend for a given mode (or None for baseline)."""
     if mode == "baseline":
         return None
-    if mode == "fresh":
+    if mode == "neural":
         from benchwrap.adapters.neural_memory import NeuralMemoryBackend
         return NeuralMemoryBackend(db_path=None)  # tempfile under /tmp/
-    if mode == "prod-readonly":
-        from benchwrap.adapters.neural_memory_readonly import (
-            ReadOnlyNeuralMemoryBackend,
-        )
-        return ReadOnlyNeuralMemoryBackend()
     raise ValueError(f"unknown mode: {mode}")
 
 

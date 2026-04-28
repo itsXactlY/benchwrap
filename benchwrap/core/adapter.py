@@ -100,11 +100,27 @@ class BenchmarkAdapter(ABC):
 
     def fewshot_pool(self, dataset: str, split: str = "train") -> list[Sample]:
         """Optional: return samples that can be used for few-shot examples.
-        
+
         Default: empty (no few-shot). Override to enable.
         These samples must NOT overlap with test samples.
         """
         return []
+
+    def default_eval_config(self) -> dict:
+        """The canonical evaluation protocol for this benchmark.
+
+        Returned dict is merged into engine.run() kwargs when the caller
+        leaves them unspecified. Use this so each adapter dictates how
+        its benchmark is *meant* to be run (fewshot count, temperature,
+        etc.) instead of the harness imposing one-size-fits-all defaults.
+
+        Examples:
+            MMLU   → {"fewshot": 5}    (Hendrycks et al. protocol)
+            GSM8K  → {"fewshot": 8}    (Wei et al. CoT protocol)
+
+        Override per adapter; default is empty (zero-shot, temp=0).
+        """
+        return {}
 
     def default_dataset(self) -> str:
         """Return the default dataset name when none is specified.

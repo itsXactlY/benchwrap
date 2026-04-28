@@ -32,26 +32,73 @@ from benchwrap.adapters.gsm8k import GSM8KAdapter
 
 
 def prefetch_mmlu() -> tuple[int, int]:
-    """Hit every (subject, split) pair so the JSONL cache is fully populated."""
+    """Hit every (subject, split) pair so the JSONL cache is fully populated.
+
+    Fast path: huggingface `datasets` library — one snapshot covers all
+    subjects, no REST rate-limiting. Falls back to the REST loop if the
+    library isn't installed.
+    """
+    import json as _json
     a = MMLUAdapter()
     splits = ("test", "dev")
-    ok = fail = 0
+    Path(a.cache_dir).mkdir(parents=True, exist_ok=True)
+
+    # Skip already-cached entries cheaply.
+    pending = [(s, sp) for s in MMLU_SUBJECTS for sp in splits
+               if not (Path(a.cache_dir) / f"{s}_{sp}.jsonl").exists()]
     total = len(MMLU_SUBJECTS) * len(splits)
-    for i, subject in enumerate(MMLU_SUBJECTS, 1):
-        for split in splits:
-            cache_file = Path(a.cache_dir) / f"{subject}_{split}.jsonl"
-            if cache_file.exists():
-                ok += 1
-                continue
-            print(f"  [{i}/{len(MMLU_SUBJECTS)}] mmlu/{subject}/{split} → fetch")
+    cached = total - len(pending)
+    print(f"  cached: {cached}/{total}; fetching: {len(pending)}")
+    if not pending:
+        print(f"[prefetch][mmlu] {total}/{total} cached (already complete)")
+        return total, 0
+
+    ok = cached
+    fail = 0
+
+    # Fast path — load once, slice many.
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        load_dataset = None
+
+    if load_dataset is not None:
+        try:
+            for i, (subject, split) in enumerate(pending, 1):
+                cache_file = Path(a.cache_dir) / f"{subject}_{split}.jsonl"
+                print(f"  [{i}/{len(pending)}] mmlu/{subject}/{split}")
+                try:
+                    ds = load_dataset("cais/mmlu", subject, split=split)
+                    with cache_file.open("w") as f:
+                        for row in ds:
+                            f.write(_json.dumps(dict(row)) + "\n")
+                    ok += 1
+                except Exception as e:
+                    print(f"    FAIL via datasets: {e}")
+                    # fall back to REST for THIS pair
+                    try:
+                        a._fetch_from_hf(subject, split)
+                        ok += 1
+                    except Exception as e2:
+                        print(f"    FAIL via REST: {e2}")
+                        fail += 1
+                        time.sleep(2)
+        except Exception as e:
+            print(f"  fast path failed entirely: {e}; falling back to REST")
+            load_dataset = None
+
+    if load_dataset is None:
+        # Slow REST loop (rate-limited without HF_TOKEN)
+        for i, (subject, split) in enumerate(pending, 1):
+            print(f"  [{i}/{len(pending)}] mmlu/{subject}/{split}")
             try:
                 a._fetch_from_hf(subject, split)
                 ok += 1
             except Exception as e:
-                fail += 1
                 print(f"    FAIL: {e}")
-                # be polite — back off a bit before the next subject
+                fail += 1
                 time.sleep(2)
+
     print(f"[prefetch][mmlu] {ok}/{total} cached, {fail} failed")
     return ok, fail
 

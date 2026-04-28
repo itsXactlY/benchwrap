@@ -136,9 +136,17 @@ class LoCoMoAdapter(BenchmarkAdapter):
         context = ""
 
         if self.memory_client:
-            # Query memory system for relevant context
+            # Dispatch to the right neural-memory tool for this QA category.
+            # LoCoMo categories: multi-hop, temporal, single-hop, open-domain, adversarial.
             try:
-                results = self.memory_client.recall(question, top_k=10)
+                cat = sample.metadata.get("category_name") or sample.metadata.get("category", "")
+                mc = self.memory_client
+                if cat == "multi-hop" and hasattr(mc, "recall_multihop"):
+                    results = mc.recall_multihop(question, top_k=10, hops=2)
+                elif cat == "temporal" and hasattr(mc, "recall_temporal"):
+                    results = mc.recall_temporal(question, top_k=10)
+                else:
+                    results = mc.recall(question, top_k=10)
                 if results:
                     context_parts = []
                     for r in results:

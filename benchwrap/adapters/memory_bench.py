@@ -300,12 +300,11 @@ class MemoryBenchAdapter(BenchmarkAdapter):
 
         if self.memory_client:
             try:
-                results = self.memory_client.recall(question, top_k=5)
+                results = self._recall_for(sample, question, top_k=5)
                 if results:
                     context_parts = []
                     for r in results:
                         content = r.get("content", r.get("text", str(r)))
-                        score = r.get("score", r.get("distance", ""))
                         context_parts.append(f"- {content}")
                     context = "\n".join(context_parts)
             except Exception as e:
@@ -357,6 +356,26 @@ class MemoryBenchAdapter(BenchmarkAdapter):
             scoring_method="memory_bench_contains_f1",
             custom={"contains": contains, "token_f1": f1},
         )
+
+    def _recall_for(self, sample: Sample, query: str, top_k: int = 5) -> list[dict]:
+        """Dispatch to the appropriate memory tool for the sample's dataset.
+
+        Picks the *proper* tool per task type:
+          - multi-hop          → recall_multihop  (graph traversal)
+          - temporal-ordering  → recall_temporal  (recency-weighted)
+          - else               → recall           (semantic only)
+
+        Falls back to plain recall() if the backend doesn't expose the
+        richer methods (e.g. a non-Neural-Memory MemoryBackend).
+        """
+        ds = sample.metadata.get("dataset", "")
+        mc = self.memory_client
+
+        if ds == "multi-hop" and hasattr(mc, "recall_multihop"):
+            return mc.recall_multihop(query, top_k=top_k, hops=2)
+        if ds == "temporal-ordering" and hasattr(mc, "recall_temporal"):
+            return mc.recall_temporal(query, top_k=top_k)
+        return mc.recall(query, top_k=top_k)
 
     def set_memory_client(self, client: MemoryBackend):
         """Set the memory backend to test."""

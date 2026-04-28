@@ -101,6 +101,7 @@ class NeuralMemoryBackend(MemoryBackend):
         db_path: str | None = None,
         embedding_backend: str = "auto",
         use_cpp: bool = True,
+        auto_connect_threshold: int = 50,
     ):
         """
         Args:
@@ -150,6 +151,7 @@ class NeuralMemoryBackend(MemoryBackend):
         self._store_count = 0
         self._recall_count = 0
         self._total_recall_ms = 0.0
+        self._auto_connect_threshold = auto_connect_threshold
 
         # Log initialization
         stats = self.mem.store.get_stats()
@@ -198,12 +200,17 @@ class NeuralMemoryBackend(MemoryBackend):
         """
         metadata = metadata or {}
 
-        # Store with benchmark-safe settings
+        # Adaptive auto_connect: build the graph for small fixture sets
+        # (multi-hop benchmark needs it) but skip for large bulk ingests
+        # (LoCoMo has 2000+ dialog turns; auto_connect is O(N²) and would
+        # take many minutes). recall_multihop degrades gracefully when no
+        # graph edges exist — falls back to plain recall.
+        use_connect = self._store_count < self._auto_connect_threshold
         mem_id = self.mem.remember(
             text=content,
             label=label or content[:60],
-            detect_conflicts=False,  # ← CRITICAL for benchmarks
-            auto_connect=False,       # ← CRITICAL for benchmarks
+            detect_conflicts=False,
+            auto_connect=use_connect,
         )
 
         self._store_count += 1
@@ -281,6 +288,62 @@ class NeuralMemoryBackend(MemoryBackend):
             })
 
         return output
+
+    # ------------------------------------------------------------------
+    # Tier-2 tools (multi-hop, graph). Optional MemoryBackend extensions.
+    # Memory-aware adapters check hasattr() and call these for richer
+    # benchmarks (multi-hop, temporal, etc.).
+    # ------------------------------------------------------------------
+
+    def recall_temporal(self, query: str, top_k: int = 5,
+                        temporal_weight: float = 0.3) -> list[dict]:
+        """Recall with temporal scoring on. Use for 'when' / ordering queries."""
+        start = time.time()
+        results = self.mem.recall(query=query, k=top_k, temporal_weight=temporal_weight)
+        elapsed_ms = (time.time() - start) * 1000
+        self._recall_count += 1
+        self._total_recall_ms += elapsed_ms
+        return [
+            {"content": r.get("content", ""), "label": r.get("label", ""),
+             "score": r.get("combined", r.get("similarity", 0.0)),
+             "id": r.get("id"), "_temporal": r.get("temporal_score", 0.0),
+             "_latency_ms": elapsed_ms}
+            for r in results
+        ]
+
+    def recall_multihop(self, query: str, top_k: int = 5,
+                        hops: int = 2, temporal_weight: float = 0.0) -> list[dict]:
+        """Multi-hop recall via graph traversal (PPR/BFS over connections)."""
+        start = time.time()
+        results = self.mem.recall_multihop(
+            query=query, k=top_k, hops=hops, temporal_weight=temporal_weight,
+        )
+        elapsed_ms = (time.time() - start) * 1000
+        self._recall_count += 1
+        self._total_recall_ms += elapsed_ms
+        return [
+            {"content": r.get("content", ""), "label": r.get("label", ""),
+             "score": r.get("similarity", 0.0), "id": r.get("id"),
+             "_hop": r.get("hop", 0), "_latency_ms": elapsed_ms}
+            for r in results
+        ]
+
+    def think(self, start_id: int, depth: int = 3, decay: float = 0.85) -> list[dict]:
+        """BFS-spread from a seed memory; returns activated nodes ranked."""
+        results = self.mem.think(start_id=start_id, depth=depth, decay=decay)
+        return [
+            {"content": r.get("content", ""), "label": r.get("label", ""),
+             "score": r.get("score", 0.0), "id": r.get("id")}
+            for r in results
+        ]
+
+    def connections(self, mem_id: int) -> list[dict]:
+        """Direct edges from one memory."""
+        return self.mem.connections(mem_id)
+
+    def graph(self) -> dict:
+        """Whole-graph snapshot (nodes, edges)."""
+        return self.mem.graph()
 
     def ingest(self, items: list[dict]) -> int:
         """Batch store — faster than individual store() calls.

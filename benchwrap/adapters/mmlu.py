@@ -98,6 +98,10 @@ class MMLUAdapter(BenchmarkAdapter):
     def name(self) -> str:
         return "mmlu"
 
+    def default_eval_config(self) -> dict:
+        # Hendrycks et al. canonical: 5-shot from the dev split, A/B/C/D output.
+        return {"fewshot": 5}
+
     def datasets(self) -> list[str]:
         return ["all"] + MMLU_SUBJECTS + list(MMLU_CATEGORIES.keys())
 

@@ -51,7 +51,7 @@ class EvaluationEngine:
         dataset: str | None = None,
         split: str = "test",
         limit: Optional[int] = None,
-        fewshot: int = 0,
+        fewshot: int | None = None,
         **gen_kwargs,
     ) -> Result:
         """Run the full evaluation pipeline.
@@ -70,6 +70,18 @@ class EvaluationEngine:
         adapter_name = self.adapter.name()
         model_name = self.backend.model_id()
         backend_name = self.backend.name()
+
+        # Honor each adapter's canonical eval protocol (fewshot count, temp,
+        # etc.). Caller-provided values still win — adapter only fills gaps.
+        defaults = self.adapter.default_eval_config() if hasattr(
+            self.adapter, "default_eval_config"
+        ) else {}
+        if fewshot is None:
+            fewshot = defaults.get("fewshot", 0)
+        for k, v in defaults.items():
+            if k == "fewshot":
+                continue
+            gen_kwargs.setdefault(k, v)
 
         # Resolve dataset — use adapter default if not specified
         if dataset is None:
@@ -108,8 +120,11 @@ class EvaluationEngine:
         scorer = self.scorer or _AdapterScorer(self.adapter)
 
         for i, sample in enumerate(samples):
-            if self.verbose and (i + 1) % 10 == 0:
-                print(f"[benchwrap] Progress: {i + 1}/{len(samples)}")
+            # Show progress: every sample for small runs, every 10th for larger.
+            n_total = len(samples)
+            log_every = 1 if n_total <= 20 else 10
+            if (i + 1) % log_every == 0 or (i + 1) == n_total:
+                print(f"[benchwrap] {adapter_name} {i + 1}/{n_total}", flush=True)
 
             # Select few-shot examples (from pool, not from test set)
             fs_samples = fewshot_pool[:fewshot] if fewshot_pool else []

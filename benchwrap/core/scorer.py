@@ -60,25 +60,29 @@ class MCQScorer(Scorer):
 
     @staticmethod
     def _extract_letter(text: str) -> str:
-        """Extract the first valid MCQ letter from text."""
+        """Extract the FINAL MCQ letter (A-D) from text.
+
+        Reasoning models work through choices and may emit many letters
+        before settling. We prefer the LAST match within a strong marker.
+        """
         text = text.strip().upper()
-        # Direct single letter
-        if text in ("A", "B", "C", "D", "E", "F"):
+        # Direct single letter (whole reply)
+        if text in ("A", "B", "C", "D"):
             return text
-        # Common patterns
-        patterns = [
-            r'(?:answer|Answer|ANSWER)[\s:]*([A-F])\b',
-            r'(?:option|Option)\s*([A-F])\b',
-            r'\(([A-F])\)',
-            r'^([A-F])[.)\s]',
-            r'\b([A-F])\b(?:\s*[:.]\s|\s*$)',
+        # Strong markers — take the last hit
+        strong = [
+            r'(?:ANSWER|FINAL ANSWER)\s*(?:IS\s*)?[:=]?\s*\(?([A-D])\)?\b',
+            r'\\BOXED\{\s*\(?([A-D])\)?\s*\}',
+            r'\bOPTION\s*\(?([A-D])\)?\b',
+            r'\(([A-D])\)',
+            r'^\s*([A-D])[.):]?\s*$',
         ]
-        for pat in patterns:
-            m = re.search(pat, text)
-            if m:
-                return m.group(1)
-        # Last resort: first standalone letter
-        letters = re.findall(r'\b([A-F])\b', text)
+        for pat in strong:
+            ms = list(re.finditer(pat, text, flags=re.MULTILINE))
+            if ms:
+                return ms[-1].group(1)
+        # Fallback: last standalone A-D in the response
+        letters = re.findall(r'\b([A-D])\b', text)
         return letters[-1] if letters else ""
 
 

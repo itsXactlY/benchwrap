@@ -292,7 +292,7 @@ class AnthropicCompatBackend(ModelBackend):
         base_url: str = "https://api.anthropic.com",
         anthropic_version: str = "2023-06-01",
         temperature: float = 0.0,
-        max_tokens: int = 1024,
+        max_tokens: int = 4096,
     ):
         self.model = model
         self.api_key = api_key

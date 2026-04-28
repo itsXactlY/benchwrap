@@ -38,6 +38,10 @@ class GSM8KAdapter(BenchmarkAdapter):
     def name(self) -> str:
         return "gsm8k"
 
+    def default_eval_config(self) -> dict:
+        # Wei et al. canonical CoT eval: 8-shot with reasoning traces.
+        return {"fewshot": 8}
+
     def datasets(self) -> list[str]:
         return ["main", "socratic"]
 
@@ -107,12 +111,10 @@ class GSM8KAdapter(BenchmarkAdapter):
         return self._scorer.score(extracted, reference)
 
     def fewshot_pool(self, dataset: str, split: str = "train") -> list[Sample]:
-        """Load train split for few-shot examples."""
+        """Load train split for few-shot examples (Wei et al. uses 8)."""
         data = self._load_data(dataset, "train")
-        pool = []
-        for i, item in enumerate(data[:5]):
-            pool.append(self._item_to_sample(item, dataset, i))
-        return pool
+        return [self._item_to_sample(item, dataset, i)
+                for i, item in enumerate(data[:8])]
 
     def extract_answer(self, response: str, sample: Sample) -> str:
         """Extract the FINAL numeric answer from a (possibly verbose) response.

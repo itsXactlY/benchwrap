@@ -179,7 +179,8 @@ Model format:
     sub_run.add_argument("--dataset", help="Dataset/subset name")
     sub_run.add_argument("--split", default="test", help="Data split (default: test)")
     sub_run.add_argument("--limit", type=int, help="Max samples to evaluate")
-    sub_run.add_argument("--fewshot", type=int, default=0, help="Number of few-shot examples")
+    sub_run.add_argument("--fewshot", type=int, default=None,
+                         help="Number of few-shot examples (default: adapter's canonical protocol)")
     sub_run.add_argument("--scorer", choices=["mcq", "numeric", "exact", "f1", "auto"],
                          default="auto", help="Scoring method (default: auto-detect)")
     sub_run.add_argument("--reasoning", action="store_true",
