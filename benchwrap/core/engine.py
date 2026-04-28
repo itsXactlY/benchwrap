@@ -139,6 +139,17 @@ class EvaluationEngine:
 
             # Generate prediction
             prediction = self.backend.generate(prompt, **gen_kwargs)
+            # Smoking-gun warning: if the model burned tokens but produced
+            # NO visible text, the eventual score is going to be 0.0 not
+            # because the answer was wrong but because we got nothing to
+            # score. Surface that loudly so it isn't read as a real result.
+            if not prediction.text.strip() and prediction.tokens_out > 0:
+                print(
+                    f"[benchwrap] WARN sample {sample.id}: empty prediction "
+                    f"despite {prediction.tokens_out} output tokens — likely "
+                    f"hidden in thinking blocks; score will be 0.0",
+                    flush=True,
+                )
 
             if self.verbose:
                 print(f"  Response: {prediction.text[:100]}...")

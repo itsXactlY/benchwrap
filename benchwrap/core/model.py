@@ -293,6 +293,7 @@ class AnthropicCompatBackend(ModelBackend):
         anthropic_version: str = "2023-06-01",
         temperature: float = 0.0,
         max_tokens: int = 4096,
+        disable_thinking: bool = True,
     ):
         self.model = model
         self.api_key = api_key
@@ -300,6 +301,10 @@ class AnthropicCompatBackend(ModelBackend):
         self.anthropic_version = anthropic_version
         self.temperature = temperature
         self.max_tokens = max_tokens
+        # MiniMax-M2.7 and Claude reasoning models can sink the entire token
+        # budget into invisible <thinking> blocks. For benchmarks we want the
+        # answer surfaced, deterministic, and cheap — strict-disabled.
+        self.disable_thinking = disable_thinking
 
     def name(self) -> str:
         if "minimax" in self.base_url:
@@ -321,6 +326,11 @@ class AnthropicCompatBackend(ModelBackend):
         }
         if prompt.system:
             body["system"] = prompt.system
+        if self.disable_thinking:
+            # Anthropic-style: explicit opt-out. Servers that ignore it pass
+            # through harmlessly; servers that respect it stop hiding tokens
+            # in <thinking> blocks.
+            body["thinking"] = {"type": "disabled"}
 
         data = json.dumps(body).encode()
         req = urllib.request.Request(
