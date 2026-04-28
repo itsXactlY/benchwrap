@@ -106,6 +106,17 @@ class BenchmarkAdapter(ABC):
         """
         return []
 
+    def pre_sample(self, sample: Sample, backend=None) -> None:
+        """Hook called by the engine BEFORE format_prompt(sample), per sample.
+
+        Use it to lazily set up state that depends on a sample's metadata —
+        e.g. clear the memory store and re-ingest the conversation a sample
+        belongs to (see LoCoMoAdapter for per-conversation isolation).
+
+        Default: no-op. Override per adapter when needed.
+        """
+        return None
+
     def default_eval_config(self) -> dict:
         """The canonical evaluation protocol for this benchmark.
 

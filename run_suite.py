@@ -135,12 +135,24 @@ def expand_for_full(benchmarks):
 
 
 def build_memory_backend(mode: str):
-    """Construct the memory backend for a given mode (or None for baseline)."""
+    """Construct the memory backend for a given mode (or None for baseline).
+
+    For 'neural': we always create a tempdir-isolated SQLite DB. The backend
+    asserts at construction time that this path is NOT the production DB.
+    """
     if mode == "baseline":
         return None
     if mode == "neural":
-        from benchwrap.adapters.neural_memory import NeuralMemoryBackend
-        return NeuralMemoryBackend(db_path=None)  # tempfile under /tmp/
+        import tempfile
+        from benchwrap.adapters.neural_memory import (
+            NeuralMemoryBackend, PROD_DB_PATH,
+        )
+        tmpdir = tempfile.mkdtemp(prefix="benchwrap_nm_")
+        db = Path(tmpdir) / "memory.db"
+        print(f"[suite] neural mode: isolated DB at {db}")
+        print(f"[suite]              PROD DB ({PROD_DB_PATH}) is OFF-LIMITS — "
+              f"asserted at backend init.")
+        return NeuralMemoryBackend(db_path=db)
     raise ValueError(f"unknown mode: {mode}")
 
 

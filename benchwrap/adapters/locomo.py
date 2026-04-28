@@ -184,13 +184,20 @@ class LoCoMoAdapter(BenchmarkAdapter):
         reference: str,
         sample: Sample,
     ) -> Score:
-        """Score using LoCoMo's F1 metric with Porter stemming."""
+        """Score using LoCoMo's F1 metric with Porter stemming.
+
+        Reports F1 as the primary metric — that's what the LoCoMo paper
+        and every published comparison use. The previous version reported
+        binary F1>0.5 which inflated/deflated arbitrarily and obscured
+        the real number.
+        """
         category = sample.metadata.get("category", 0)
         f1 = _score_qa(prediction, reference, category)
 
         return Score(
-            exact_match=1.0 if f1 > 0.5 else 0.0,
+            exact_match=1.0 if f1 > 0.5 else 0.0,  # secondary debug metric
             f1=f1,
+            accuracy=f1,                            # primary = raw F1
             raw_prediction=prediction,
             raw_reference=reference,
             scoring_method=f"locomo_f1_cat{category}",
@@ -198,39 +205,53 @@ class LoCoMoAdapter(BenchmarkAdapter):
         )
 
     def pre_evaluate(self, dataset: str = "all", backend=None):
-        """Ingest conversation data into memory before evaluation."""
+        """No-op. Per-conversation ingestion happens lazily in pre_sample().
+
+        WHY: bulk-ingesting all 10 conversations into one DB caused
+        cross-conversation contamination (a question about Caroline could
+        recall dialog from Calvin). Real LoCoMo eval is per-conversation —
+        each user has their own memory. We honor that by clear+ingest at
+        each conversation transition.
+        """
+        # Reset bookkeeping so the first sample triggers an ingest.
+        self._loaded_conv = None
+
+    def pre_sample(self, sample, backend=None):
+        """Per-sample hook: ensure memory holds ONLY this sample's conversation.
+
+        Engine calls this before format_prompt(). When the conversation
+        index changes, we clear the store and re-ingest. Within a
+        conversation we no-op (samples come grouped by conv_idx in load()).
+        """
         if not self.memory_client:
             return
-        
+        conv_idx = sample.metadata.get("conversation")
+        if conv_idx is None:
+            return
+        if getattr(self, "_loaded_conv", None) == conv_idx:
+            return  # already loaded
+        # Switch conversations: clear and re-ingest
+        if hasattr(self.memory_client, "clear"):
+            self.memory_client.clear()
+        self._ingest_one_conv(conv_idx)
+        self._loaded_conv = conv_idx
+
+    def _ingest_one_conv(self, conv_idx: int) -> int:
+        """Store every dialog turn of one conversation into memory."""
         data = self._load_data()
-        
-        # Determine which conversations to ingest
-        if dataset.startswith("conv-"):
-            conv_indices = [int(dataset.split("-")[1])]
-        elif dataset in CATEGORY_NAMES:
-            # Ingest all conversations (category filtering happens in load())
-            conv_indices = list(range(len(data)))
-        else:
-            # "all" or other — ingest everything
-            conv_indices = list(range(len(data)))
-        
-        for conv_idx in conv_indices:
-            if conv_idx >= len(data):
-                continue
-            conv = data[conv_idx]
-            dialogs = _extract_dialogs(conv)
-            
-            # Clear previous conversation data to avoid cross-contamination
-            # (memory_bench data from prior runs)
-            
-            for dialog in dialogs:
-                content = _build_memory_content(dialog)
-                label = _build_memory_label(dialog)
-                self.memory_client.store(content, label=label, metadata={
-                    "conversation": conv_idx,
-                    "session": dialog.get("session"),
-                    "dia_id": dialog.get("dia_id"),
-                })
+        if conv_idx >= len(data):
+            return 0
+        conv = data[conv_idx]
+        dialogs = _extract_dialogs(conv)
+        for dialog in dialogs:
+            content = _build_memory_content(dialog)
+            label = _build_memory_label(dialog)
+            self.memory_client.store(content, label=label, metadata={
+                "conversation": conv_idx,
+                "session": dialog.get("session"),
+                "dia_id": dialog.get("dia_id"),
+            })
+        return len(dialogs)
 
     def ingest_conversation(self, conv_idx: int, backend: ModelBackend | None = None):
         """Ingest a conversation into the memory system.

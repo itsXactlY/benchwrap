@@ -332,29 +332,36 @@ class MemoryBenchAdapter(BenchmarkAdapter):
         reference: str,
         sample: Sample,
     ) -> Score:
-        """Score with F1 (for free-form) and exact match."""
-        pred_clean = prediction.strip().lower()
-        ref_clean = reference.strip().lower()
+        """Honest scoring for free-form QA: SQuAD-style token F1 as primary.
 
-        # Exact match (strict)
-        em = 1.0 if pred_clean == ref_clean else 0.0
+        Why F1 (not EM, not contains):
+          - EM is too strict: 'the answer is 73 days' vs '73' fails as 0.0
+            even though the model answered correctly.
+          - 'contains' is too loose (the bench-maxx version): a 500-word
+            wall of correct + hallucinated text scored 1.0 if the ref
+            substring was buried somewhere.
+          - F1 is what SQuAD, LoCoMo, MemoryAgentBench all use. It rewards
+            getting the right tokens AND penalizes verbosity (precision
+            drops as you add noise tokens).
 
-        # Contains match (lenient) — does the prediction contain the answer?
-        contains = 1.0 if ref_clean in pred_clean else 0.0
+        Both EM and F1 are reported. accuracy = F1 so the suite table
+        reflects the canonical metric.
+        """
+        pred_norm = _normalize_for_em(prediction)
+        ref_norm = _normalize_for_em(reference)
+        em = 1.0 if pred_norm == ref_norm else 0.0
+        f1 = _token_f1(pred_norm, ref_norm)
+        contains = 1.0 if ref_norm in pred_norm and ref_norm else 0.0
 
-        # Token F1
-        f1 = _token_f1(pred_clean, ref_clean)
-
-        # Use contains as primary for memory benchmarks
-        # (because the LLM might add extra words)
         return Score(
             exact_match=em,
             f1=f1,
-            accuracy=contains,
+            accuracy=f1,                          # primary = F1 (SQuAD-style)
             raw_prediction=prediction,
             raw_reference=reference,
-            scoring_method="memory_bench_contains_f1",
-            custom={"contains": contains, "token_f1": f1},
+            scoring_method="memory_bench_f1",
+            matched=f"{pred_norm!r} vs {ref_norm!r}",
+            custom={"em": em, "contains_debug": contains, "token_f1": f1},
         )
 
     def _recall_for(self, sample: Sample, query: str, top_k: int = 5) -> list[dict]:
@@ -408,6 +415,21 @@ class MemoryBenchAdapter(BenchmarkAdapter):
         store_data = data.get("store", data.get("data", []))
         queries = data.get("queries", data.get("test", []))
         return store_data, queries
+
+
+def _normalize_for_em(s: str) -> str:
+    """SQuAD-style normalization for fair EM scoring of free-form answers.
+
+    Strips punctuation, articles, and whitespace; lowercases. This avoids
+    EM=0 for trivially-different formatting like 'A: 42.' vs '42' while
+    still requiring the answer to actually match.
+    """
+    import re as _re
+    s = (s or "").lower().strip()
+    s = _re.sub(r'\b(a|an|the)\b', ' ', s)
+    s = _re.sub(r'[^\w\s]', ' ', s)
+    s = _re.sub(r'\s+', ' ', s).strip()
+    return s
 
 
 def _token_f1(prediction: str, reference: str) -> float:

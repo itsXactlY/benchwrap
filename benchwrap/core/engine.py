@@ -126,6 +126,15 @@ class EvaluationEngine:
             if (i + 1) % log_every == 0 or (i + 1) == n_total:
                 print(f"[benchwrap] {adapter_name} {i + 1}/{n_total}", flush=True)
 
+            # Per-sample setup hook (e.g. LoCoMo swaps the memory state to
+            # the conversation this sample belongs to).
+            if hasattr(self.adapter, "pre_sample"):
+                try:
+                    self.adapter.pre_sample(sample, backend=self.backend)
+                except Exception as e:
+                    print(f"[benchwrap] WARN pre_sample({sample.id}) raised: {e}",
+                          flush=True)
+
             # Select few-shot examples (from pool, not from test set)
             fs_samples = fewshot_pool[:fewshot] if fewshot_pool else []
 
