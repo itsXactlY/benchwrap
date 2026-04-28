@@ -71,12 +71,19 @@ class OllamaBackend(ModelBackend):
         model: str = "openhermes:7b-v2.5",
         host: str = "http://localhost:11434",
         temperature: float = 0.0,
-        num_predict: int = 512,
+        num_predict: int = 4096,
+        disable_thinking: bool = True,
     ):
         self.model = model
         self.host = host.rstrip("/")
         self.temperature = temperature
         self.num_predict = num_predict
+        # Reasoning models on Ollama (gpt-oss:120b, qwen3, deepseek-r1, etc.)
+        # split output into message.content + message.thinking. Without an
+        # explicit `think:false`, the model burns tokens on a thinking
+        # trace AND may still leave message.content empty if the budget
+        # runs out. We disable thinking by default for benchmarks.
+        self.disable_thinking = disable_thinking
 
     def name(self) -> str:
         return "ollama"
@@ -103,6 +110,8 @@ class OllamaBackend(ModelBackend):
                 "num_predict": num_predict,
             },
         }
+        if self.disable_thinking:
+            body["think"] = False
 
         data = json.dumps(body).encode()
         req = urllib.request.Request(
@@ -125,7 +134,14 @@ class OllamaBackend(ModelBackend):
             )
 
         latency = (time.time() - start) * 1000
-        text = result.get("message", {}).get("content", "")
+        msg = result.get("message", {}) or {}
+        text = msg.get("content", "") or ""
+        # Fallback: some models still emit a thinking trace even with
+        # think:false. If content is empty but thinking has the answer,
+        # use thinking — the adapter's extractor pulls the final answer
+        # out via the same regex paths it'd use for inline CoT.
+        if not text.strip() and msg.get("thinking"):
+            text = msg["thinking"]
 
         return Prediction(
             text=text,
